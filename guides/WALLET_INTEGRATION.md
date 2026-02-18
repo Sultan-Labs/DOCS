@@ -275,7 +275,58 @@ try {
 
 ## Without SDK (Direct Integration)
 
-If you don't want to use the SDK, you can integrate directly:
+If you don't want to use the SDK, you can integrate directly using the WalletLink client.
+
+### Reference Implementation
+
+**HODL Holdings** is a fully working reference implementation:
+
+- **Live Demo:** https://hodl.sltn.io
+- **Source:** https://github.com/Sultan-Labs/hodl-holdings
+
+Key files to copy:
+- `src/api/walletLink.ts` - Complete WalletLink client (~600 lines)
+- `src/components/WalletConnectModal.tsx` - React connection UI
+- `src/hooks/useWallet.ts` - Wallet state management
+
+### WalletLink Client
+
+Copy the full implementation from [hodl-holdings/src/api/walletLink.ts](https://github.com/Sultan-Labs/hodl-holdings/blob/main/src/api/walletLink.ts)
+
+```typescript
+import { walletLink } from './api/walletLink';
+
+// 1. Generate session
+const { deepLinkUrl, sessionId } = await walletLink.generateSession();
+
+// 2. Show QR code or "Open Wallet" button
+// deepLinkUrl = "https://wallet.sltn.io/connect?session=..."
+
+// 3. Wait for connection
+const address = await walletLink.waitForConnection(120000);
+console.log('Connected:', address);
+
+// 4. Request signature
+const { signature, publicKey } = await walletLink.signMessage({
+  type: 'transfer',
+  from: address,
+  to: 'sultan1recipient...',
+  amount: '1000000000',
+  timestamp: Date.now(),
+  nonce: 0
+});
+
+// 5. Submit to RPC
+await fetch('https://rpc.sltn.io/transaction', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    tx: { from: address, to, amount, timestamp, nonce },
+    signature,
+    public_key: publicKey
+  })
+});
+```
 
 ### Extension API
 
@@ -293,30 +344,38 @@ if (window.sultanWallet) {
 }
 ```
 
-### WalletLink Protocol
+### WalletLink Protocol Details
 
-```typescript
-// 1. Generate session ID
-const sessionId = crypto.randomUUID();
+**Relay Server:** `wss://sultan-walletlink-relay.fly.dev`
 
-// 2. Connect to relay
-const ws = new WebSocket('wss://relay.sltn.io');
-ws.send(JSON.stringify({
-  type: 'create_session',
-  session_id: sessionId
-}));
-
-// 3. Display QR code with session link
-const qrUrl = `https://wallet.sltn.io/connect?session=${sessionId}`;
-
-// 4. Wait for wallet to connect
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  if (data.type === 'connected') {
-    console.log('Wallet connected:', data.address);
-  }
-};
+**Deep Link Format:**
 ```
+https://wallet.sltn.io/connect?session=<encoded-sultan-url>
+```
+
+Where `<encoded-sultan-url>` is URL-encoded:
+```
+sultan://wl?s=<sessionId>&k=<base64Key>&b=<relayUrl>&n=<appName>&o=<origin>
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `s` | Session ID (UUID v4) |
+| `k` | Session key (32 bytes, URL-safe base64) |
+| `b` | Relay WebSocket URL |
+| `n` | Your app name |
+| `o` | Your app origin |
+
+**Message Types:**
+
+| Type | Direction | Description |
+|------|-----------|-------------|
+| `session_init` | dApp → Relay | Initialize session |
+| `connect_response` | Wallet → dApp | Connection approval |
+| `sign_message_request` | dApp → Wallet | Request signature |
+| `sign_message_response` | Wallet → dApp | Return signature |
+
+**Encryption:** All messages are AES-256-GCM encrypted with a key derived via HKDF-SHA256 from the session key.
 
 ## Security Best Practices
 
